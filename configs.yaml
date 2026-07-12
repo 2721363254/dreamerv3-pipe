@@ -176,6 +176,62 @@ memorymaze:
   imag_gradient: 'reinforce'
   task: 'memorymaze_9x9'
 
+mock:
+  # 轻量 mock 环境的快速冒烟配置：小模型、短步数、关闭 compile，
+  # 用于在几分钟内验证 DreamerV3 训练全流程是否跑通。
+  task: mock_reward
+  steps: 2e4
+  action_repeat: 1
+  envs: 1
+  prefill: 200
+  train_ratio: 32
+  time_limit: 100
+  eval_every: 5e3
+  log_every: 5e2
+  eval_episode_num: 2
+  video_pred_log: true
+  compile: False
+  dyn_hidden: 128
+  dyn_deter: 256
+  dyn_stoch: 16
+  dyn_discrete: 16
+  units: 128
+  batch_size: 16
+  batch_length: 32
+  encoder: {mlp_keys: '$^', cnn_keys: 'image', cnn_depth: 16, mlp_layers: 2, mlp_units: 128}
+  decoder: {mlp_keys: '$^', cnn_keys: 'image', cnn_depth: 16, mlp_layers: 2, mlp_units: 128}
+  actor: {dist: 'onehot', std: 'none'}
+  imag_gradient: 'reinforce'
+
+pipe_mock:
+  # 管道巡检 mock（Aerial Gym 契约后端）：深度图 + 向量双模态，
+  # 连续速度动作。5070 Ti 上可跑的中等规模配置。
+  task: pipe_mock
+  steps: 1e5
+  action_repeat: 1
+  envs: 1
+  prefill: 1000
+  train_ratio: 64
+  time_limit: 400
+  eval_every: 1e4
+  log_every: 1e3
+  eval_episode_num: 3
+  video_pred_log: true
+  compile: False
+  dyn_hidden: 256
+  dyn_deter: 512
+  dyn_stoch: 32
+  dyn_discrete: 32
+  units: 256
+  batch_size: 16
+  batch_length: 48
+  # 双模态：CNN 收 image（深度图），MLP 收 state（向量观测）
+  encoder: {mlp_keys: 'state', cnn_keys: 'image', cnn_depth: 24, mlp_layers: 2, mlp_units: 256}
+  decoder: {mlp_keys: 'state', cnn_keys: 'image', cnn_depth: 24, mlp_layers: 2, mlp_units: 256}
+  # 连续动作路径：normal 分布 + 重参数化梯度（对照 crafter 的 onehot+reinforce）
+  actor: {dist: 'normal', std: 'learned', min_std: 0.1}
+  imag_gradient: 'dynamics'
+
 debug:
   debug: True
   pretrain: 1

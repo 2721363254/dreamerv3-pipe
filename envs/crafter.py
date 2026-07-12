@@ -11,7 +11,7 @@ class Crafter:
 
         self._env = crafter.Env(size=size, reward=(task == "reward"), seed=seed)
         self._achievements = crafter.constants.achievements.copy()
-        self.reward_range = [-np.inf, np.inf]
+        self.reward_range = [0, 1]
 
     @property
     def observation_space(self):
@@ -19,15 +19,15 @@ class Crafter:
             "image": gym.spaces.Box(
                 0, 255, self._env.observation_space.shape, dtype=np.uint8
             ),
-            "is_first": gym.spaces.Box(-np.inf, np.inf, (1,), dtype=np.uint8),
-            "is_last": gym.spaces.Box(-np.inf, np.inf, (1,), dtype=np.uint8),
-            "is_terminal": gym.spaces.Box(-np.inf, np.inf, (1,), dtype=np.uint8),
-            "log_reward": gym.spaces.Box(-np.inf, np.inf, (1,), dtype=np.float32),
+            "is_first": gym.spaces.Box(0, 1, (1,), dtype=np.uint8),
+            "is_last": gym.spaces.Box(0, 1, (1,), dtype=np.uint8),
+            "is_terminal": gym.spaces.Box(0, 1, (1,), dtype=np.uint8),
+            "log_reward": gym.spaces.Box(0, 1, (1,), dtype=np.float32),
         }
         spaces.update(
             {
                 f"log_achievement_{k}": gym.spaces.Box(
-                    -np.inf, np.inf, (1,), dtype=np.float32
+                    0, 1, (1,), dtype=np.float32
                 )
                 for k in self._achievements
             }

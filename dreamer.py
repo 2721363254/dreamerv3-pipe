@@ -193,6 +193,18 @@ def make_env(config, mode, id):
 
         env = minecraft.make_env(task, size=config.size, break_speed=config.break_speed)
         env = wrappers.OneHotAction(env)
+    elif suite == "mock":
+        import envs.mock as mock
+
+        env = mock.MockEnv(task, config.size, seed=config.seed + id)
+        env = wrappers.OneHotAction(env)
+    elif suite == "pipe":
+        import envs.pipe_inspection as pipe_inspection
+
+        env = pipe_inspection.PipeInspection(
+            task, config.size, seed=config.seed + id
+        )
+        env = wrappers.NormalizeActions(env)
     else:
         raise NotImplementedError(suite)
     env = wrappers.TimeLimit(env, config.time_limit)
@@ -344,7 +356,9 @@ if __name__ == "__main__":
     parser.add_argument("--configs", nargs="+")
     args, remaining = parser.parse_known_args()
     configs = yaml.safe_load(
-        (pathlib.Path(sys.argv[0]).parent / "configs.yaml").read_text()
+        (pathlib.Path(sys.argv[0]).parent / "configs.yaml").read_text(
+            encoding="utf-8"
+        )
     )
 
     def recursive_update(base, update):
