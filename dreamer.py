@@ -202,7 +202,7 @@ def make_env(config, mode, id):
         import envs.pipe_inspection as pipe_inspection
 
         env = pipe_inspection.PipeInspection(
-            task, config.size, seed=config.seed + id
+            task, config.size, seed=config.seed + id, mode=mode
         )
         env = wrappers.NormalizeActions(env)
     else:

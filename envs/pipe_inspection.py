@@ -27,10 +27,14 @@ from .pipe_sim.backend import MockPipeInspectionTask, task_config
 class PipeInspection:
     metadata = {}
 
-    def __init__(self, task="mock", size=(64, 64), seed=0):
+    def __init__(self, task="mock", size=(64, 64), seed=0, mode="train"):
         assert task in ("mock",), "真实 Aerial Gym 后端在 A100 阶段接入"
         cfg = task_config
         cfg.camera_size = tuple(size)
+        # 训练环境用随机布局（泛化），评估环境用图纸复刻（固定场景）
+        cfg.layout = "random" if mode == "train" else "blueprint"
+        if mode != "train":
+            cfg.curriculum_episodes = 0   # 评估始终用真实机体半径
         self._size = tuple(size)
         self._backend = MockPipeInspectionTask(
             task_config=cfg, seed=seed, num_envs=1, device="cpu"

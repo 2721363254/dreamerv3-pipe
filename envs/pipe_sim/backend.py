@@ -52,23 +52,30 @@ class task_config:
     camera_fov_deg = 90.0
     camera_max_range = 6.0
 
-    # 机体与控制
-    robot_radius = 0.15
-    v_tau = 0.35           # 一阶速度跟踪时间常数
-    max_v_xy = 1.0         # 机体系 x/y 最大速度指令 (m/s)
+    # 机体与控制（含护桨实测：水平外接半径 0.26 m）
+    robot_radius = 0.26          # 课程终点（真实机体）
+    robot_radius_start = 0.15    # 课程起点
+    curriculum_episodes = 150    # 每环境线性递进的回合数（0 = 关闭课程）
+    v_tau = 0.35
+    max_v_xy = 1.0
     max_v_z = 0.5
-    max_yaw_rate = 1.0     # rad/s
+    max_yaw_rate = 1.0
 
-    # 管道几何
-    pipe_length = 12.0
+    # 管道几何（图纸确认：Φ2 m × 7 m；layout 由 mode 决定）
+    pipe_length = 7.0
     pipe_radius = 1.0
-    strut_spacing = 1.5
-    struts_per_ring = (1, 3)
-    strut_radius = 0.06
+    layout = "random"            # 训练: random；评估: blueprint
+    difficulty = "medium"        # sparse|medium|dense —— 难度谱实验轴
+    min_window = None            # None = 取难度档位值
+    strut_radius = 0.09
+
+    # 位姿噪声（模拟定位误差：动捕≈0，机载估计为cm级+慢漂移）
+    pose_noise_max = 0.05        # 每回合采样 sigma ~ U(0, max)，单位 m
+    pose_drift_rate = 0.002      # 每步随机游走漂移标准差 (m)
 
     # 视点任务
-    waypoint_spacing = 1.2
-    reach_threshold = 0.35
+    waypoint_spacing = 1.1
+    reach_threshold = 0.45
 
     # 扰动场
     dist_gain = 0.9        # 峰值扰动加速度 (m/s^2)，clearance→0 时
@@ -107,14 +114,15 @@ class MockPipeInspectionTask:
             v = PipeVessel(
                 length=task_config.pipe_length,
                 radius=task_config.pipe_radius,
-                strut_spacing=task_config.strut_spacing,
-                struts_per_ring=task_config.struts_per_ring,
+                layout=task_config.layout,
+                difficulty=task_config.difficulty,
+                min_window=task_config.min_window,
                 strut_radius=task_config.strut_radius,
                 seed=task_config.seed * 1000 + i,
             )
             wps = v.generate_waypoints(
                 spacing=task_config.waypoint_spacing,
-                robot_radius=task_config.robot_radius,
+                robot_radius=task_config.robot_radius,  # 按终点半径生成，全程安全
                 seed=task_config.seed * 1000 + i,
             )
             self.vessels.append(v)
@@ -133,6 +141,10 @@ class MockPipeInspectionTask:
         self.wp_idx = torch.zeros((N,), dtype=torch.long, device=self.device)
         self.sim_steps = torch.zeros((N,), dtype=torch.long, device=self.device)
         self.prev_dist = torch.zeros((N,), device=self.device)
+        # 课程与位姿噪声状态
+        self.episode_count = np.zeros(N, dtype=np.int64)
+        self._pose_sigma = np.zeros(N)
+        self._pose_drift = np.zeros((N, 3))
 
         self.rewards = torch.zeros((N,), device=self.device)
         self.terminations = torch.zeros((N,), device=self.device)
@@ -182,6 +194,16 @@ class MockPipeInspectionTask:
         hover = 1.0 + c.dist_hover_boost * np.exp(-(speed / 0.3) ** 2)
         return c.dist_gain * proximity * hover * field
 
+    def current_robot_radius(self, i):
+        """机体半径课程：按该环境已完成回合数线性 0.15 → 0.26。"""
+        c = self.cfg
+        if c.curriculum_episodes <= 0:
+            return c.robot_radius
+        frac = min(1.0, self.episode_count[i] / c.curriculum_episodes)
+        return c.robot_radius_start + frac * (
+            c.robot_radius - c.robot_radius_start
+        )
+
     # ---------- reset ----------
 
     def reset(self):
@@ -210,6 +232,10 @@ class MockPipeInspectionTask:
             wp = self.waypoints[i][0]
             self.prev_dist[i] = float(np.linalg.norm(wp - p))
             self._resample_disturbance(i)
+            self.episode_count[i] += 1
+            # 每回合重采样定位噪声水平（覆盖动捕级~机载估计级）
+            self._pose_sigma[i] = self._rng.uniform(0, self.cfg.pose_noise_max)
+            self._pose_drift[i] = 0.0
 
     # ---------- step ----------
 
@@ -251,7 +277,7 @@ class MockPipeInspectionTask:
 
             # 碰撞检测
             new_clr = float(v.clearance(pos_np[i]))
-            if new_clr < c.robot_radius:
+            if new_clr < self.current_robot_radius(i):
                 self.terminations[i] = 1.0
                 crashes[i] = 1.0
                 self.rewards[i] += c.k_crash
@@ -326,18 +352,36 @@ class MockPipeInspectionTask:
         [7]    偏航角速度指令（上一步）
         [8:12] 上一步动作
         [12]   剩余视点比例（1→0，任务进度）
-        [13]   当前 clearance（截断到 [0,1]，近壁感知）
+        [13]   深度图最小值/max_range（近障感知，传感器可得，非特权）
         [14]   速度模长
+        注：[0:3]/[3] 依赖定位的量已注入噪声（白噪声+慢漂移，每回合采样水平）
         """
         c = self.cfg
         H, W = c.camera_size
         for i in range(self.num_envs):
             v = self.vessels[i]
-            p = self.pos[i].cpu().numpy()
+            p_true = self.pos[i].cpu().numpy()
             yaw = float(self.yaw[i].item())
             wps = self.waypoints[i]
             k = min(int(self.wp_idx[i].item()), len(wps) - 1)
             wp = wps[k]
+
+            # 深度渲染先行（真实传感器视角，用真实位姿）
+            depth = v.render_depth(
+                p_true, yaw, size=(H, W),
+                fov_deg=c.camera_fov_deg, max_range=c.camera_max_range,
+            )
+            self.task_obs["depth_range_pixels"][i] = torch.tensor(
+                depth, dtype=torch.float32, device=self.device
+            )
+
+            # 位姿噪声：白噪声 + 慢漂移（仅影响依赖定位的观测量）
+            self._pose_drift[i] += self._rng.normal(
+                0, c.pose_drift_rate, 3
+            )
+            p = p_true + self._pose_drift[i] + self._rng.normal(
+                0, self._pose_sigma[i], 3
+            )
 
             vec_w = wp - p
             d = np.linalg.norm(vec_w)
@@ -354,7 +398,9 @@ class MockPipeInspectionTask:
                 sy * vel_w[0] + cy * vel_w[1],
                 vel_w[2],
             ])
-            clr = float(np.clip(v.clearance(p), 0.0, 1.0))
+            # 去特权：近障感知来自深度图最小值（真实传感器可得），
+            # 不再读 SDF 真值
+            min_depth = float(depth.min() / c.camera_max_range)
 
             obs = np.zeros(c.observation_space_dim, dtype=np.float32)
             obs[0:3] = unit_b
@@ -363,16 +409,8 @@ class MockPipeInspectionTask:
             obs[7] = float(self.prev_action[i, 3].item())
             obs[8:12] = self.prev_action[i].cpu().numpy()
             obs[12] = 1.0 - k / max(len(wps), 1)
-            obs[13] = clr
+            obs[13] = min_depth
             obs[14] = float(np.linalg.norm(vel_w))
             self.task_obs["observations"][i] = torch.tensor(
                 obs, device=self.device
-            )
-
-            depth = v.render_depth(
-                p, yaw, size=(H, W),
-                fov_deg=c.camera_fov_deg, max_range=c.camera_max_range,
-            )
-            self.task_obs["depth_range_pixels"][i] = torch.tensor(
-                depth, dtype=torch.float32, device=self.device
             )
