@@ -126,6 +126,7 @@ class PipeVessel:
         self._axis_b = np.array([self.L, 0.0, 0.0])
 
         self.internals = []
+        self.spec = []   # [(kind, x, kwargs)] —— 标称设计，供扰动复制
         self.rings = []  # x 位置列表（内件生成后放置，避开内件截面）
 
         if layout == "blueprint":
@@ -152,30 +153,34 @@ class PipeVessel:
 
     # ---------- 构件生成器 ----------
 
-    def _mk_baffle_v(self, x, opening=None, tilt=None):
+    def _mk_baffle_v(self, x, opening=None, tilt=None, b_scales=None,
+                     _record=True):
         """V 形挡板 "\\/"：两块半平面板，法线向内倾斜，
         开口方向 opening（弧度，窗口中心方位角）留出通道。"""
         opening = self._rng.uniform(0, 2 * np.pi) if opening is None else opening
         tilt = self._rng.uniform(np.deg2rad(25), np.deg2rad(55)) if tilt is None else tilt
-        # 窗口中心方向
-        w = np.array([np.cos(opening), np.sin(opening)])
-        # 两块板的半平面法线：从窗口方向向两侧各转 (90°+tilt)
+        if b_scales is None:
+            b_scales = tuple(self._rng.uniform(1.0, 1.6, 2))
+        if _record:
+            self.spec.append(("baffle_v", x, dict(
+                opening=opening, tilt=tilt, b_scales=tuple(b_scales))))
         prims = []
-        for sgn in (+1.0, -1.0):
+        for sgn, bs in zip((+1.0, -1.0), b_scales):
             ang = opening + sgn * (0.5 * np.pi + tilt)
             u = np.array([np.cos(ang), np.sin(ang)])
-            # 半平面边界线到窗口中心的距离决定窗口大小
-            b = -0.5 * self.min_window * self._rng.uniform(1.0, 1.6)
+            b = -0.5 * self.min_window * bs
             prims.append(("halfplane", dict(x0=x, t=self._plate_t, u=u, b=b)))
         return Internal("baffle_v", x, prims)
 
-    def _mk_weir(self, x, roll=None, height_frac=None):
+    def _mk_weir(self, x, roll=None, height_frac=None, _record=True):
         """堰板 "-"：单块板占据截面一侧，窗口在对侧。
         roll 控制窗口方位（默认窗口朝上 = 板从底部升起）。"""
         roll = (self._rng.uniform(0, 2 * np.pi)
                 if roll is None else roll)          # 窗口中心方位角
         hf = (self._rng.uniform(0.35, 0.65)
               if height_frac is None else height_frac)  # 板占直径比例
+        if _record:
+            self.spec.append(("weir", x, dict(roll=roll, height_frac=hf)))
         u = np.array([np.cos(roll), np.sin(roll)])  # 指向窗口的方向
         # 板 = {u·p <= b}；窗口宽度 = R - b，保证 >= 1.1*min_window
         b_max = self.R - 1.1 * self.min_window
@@ -185,21 +190,26 @@ class PipeVessel:
             ("halfplane", dict(x0=x, t=self._plate_t, u=u, b=float(b)))
         ])
 
-    def _mk_vortex(self, x, azim=None, size=None):
+    def _mk_vortex(self, x, azim=None, size=None, _record=True):
         """防涡器 "."：壁面局部小凸起（盒）。不构成主通道约束。"""
         azim = self._rng.uniform(0, 2 * np.pi) if azim is None else azim
         s = self._rng.uniform(0.10, 0.20) if size is None else size
+        if _record:
+            self.spec.append(("vortex", x, dict(azim=azim, size=s)))
         c = np.array([x, (self.R - 0.5 * s) * np.cos(azim),
                       (self.R - 0.5 * s) * np.sin(azim)])
         return Internal("vortex", x, [
             ("box", dict(center=c, half=np.array([s, s, s]) * 0.5))
         ])
 
-    def _mk_strut(self, x):
+    def _mk_strut(self, x, a0=None, a1=None, dx=None, _record=True):
         """管状弦杆（照片中的管式内件类别；v1 遗产）。"""
-        a0 = self._rng.uniform(0, 2 * np.pi)
-        a1 = a0 + self._rng.uniform(0.6 * np.pi, 1.4 * np.pi)
-        dx = self._rng.uniform(-0.15, 0.15)
+        a0 = self._rng.uniform(0, 2 * np.pi) if a0 is None else a0
+        a1 = (a0 + self._rng.uniform(0.6 * np.pi, 1.4 * np.pi)
+              if a1 is None else a1)
+        dx = self._rng.uniform(-0.15, 0.15) if dx is None else dx
+        if _record:
+            self.spec.append(("strut", x, dict(a0=a0, a1=a1, dx=dx)))
         p0 = np.array([x - dx, self.R * np.cos(a0), self.R * np.sin(a0)])
         p1 = np.array([x + dx, self.R * np.cos(a1), self.R * np.sin(a1)])
         return Internal("strut", x, [
@@ -214,11 +224,13 @@ class PipeVessel:
     def _validated_add(self, maker, x, tries=8, **kw):
         """生成内件并验证其截面存在可行窗口，失败重采样。"""
         for _ in range(tries):
+            n_spec = len(self.spec)
             it = getattr(self, maker)(x, **kw)
             self.internals.append(it)
             if self._window_ok(x):
                 return True
             self.internals.pop()
+            del self.spec[n_spec:]
         return False
 
     def _window_ok(self, x, n=256):
@@ -315,18 +327,21 @@ class PipeVessel:
         t[~hit & (t >= max_range - 1e-6)] = max_range
         return t
 
-    def generate_waypoints(self, spacing=1.0, robot_radius=0.26,
-                           margin=0.15, n_candidates=96, seed=None):
-        """常规轴向间隔视点 + 每个内件截面处强制一个"穿窗视点"。
-        穿窗视点 = 该截面 clearance 最大的点 —— 离线同伦决策。"""
+    def generate_viewpoints(self, mode="axial", spacing=1.1,
+                            robot_radius=0.26, margin=0.10,
+                            n_candidates=96, seed=None):
+        """任务层：巡检视点序列（到达即计分的真任务点）。
+
+        axial 模式：沿轴向按固定间隔布置，每站取截面内 clearance
+        最大点（安全的观察站）。注意这只是任务定义之一——视点之间
+        的连接可行性完全交给全局层（RRT），此处不做窗口点/合并等
+        引导性处理。wall_scan 模式（沿壁扫描摄影点）留待后续。
+        """
+        assert mode == "axial", "wall_scan 模式后续版本实现"
         rng = np.random.RandomState(seed if seed is not None else 12345)
         thresh = robot_radius + margin
-        xs = list(np.arange(spacing, self.L - 0.5 * spacing, spacing))
-        # 内件截面（略偏移半个板厚避免贴板）
-        xs += [it.x for it in self.internals if it.kind != "vortex"]
-        xs = sorted(xs)
-        waypoints = []
-        for x in xs:
+        vps = []
+        for x in np.arange(spacing, self.L - 0.5 * spacing, spacing):
             ang = rng.uniform(0, 2 * np.pi, n_candidates)
             rad = self.R * 0.8 * np.sqrt(rng.uniform(0, 1, n_candidates))
             cand = np.stack([np.full(n_candidates, x),
@@ -335,13 +350,45 @@ class PipeVessel:
             c = self.clearance(cand)
             best = int(np.argmax(c))
             if c[best] > thresh:
-                # 与上一个视点太近则合并（内件截面点优先保留）
-                if waypoints and abs(waypoints[-1][0] - x) < 0.4:
-                    if c[best] > self.clearance(waypoints[-1]):
-                        waypoints[-1] = cand[best]
-                else:
-                    waypoints.append(cand[best])
-        return np.array(waypoints)
+                vps.append(cand[best])
+        return np.array(vps)
+
+    def perturbed_copy(self, sigma_x=0.0, sigma_ang_deg=0.0,
+                       extra_strut_prob=0.0, seed=0):
+        """标称设计 → 施工/现实扰动版：内件轴向位移 N(0,σx)、
+        角参数偏转 N(0,σang)，并以概率追加图纸外杆件。
+        sigma=0 且 extra=0 时返回与标称几何完全一致的副本。
+        全局层在标称上规划，执行环境用扰动版 —— 制造"图纸与
+        现实的偏差"，策略必须在线适应（可扫描的实验轴）。"""
+        rng = np.random.RandomState(seed)
+        v = PipeVessel(length=self.L, radius=self.R, layout="empty",
+                       difficulty=self.difficulty,
+                       plate_thickness=self._plate_t,
+                       strut_radius=self._strut_r,
+                       ring_spacing=0,  # 环手动复制，保持一致
+                       rib_height=self._rib_h, seed=seed)
+        v.rings = list(self.rings)
+        sa = np.deg2rad(sigma_ang_deg)
+        for kind, x, kw in self.spec:
+            x2 = x + rng.normal(0, sigma_x) if sigma_x > 0 else x
+            kw2 = dict(kw)
+            for key in ("opening", "roll", "azim", "a0", "a1"):
+                if key in kw2 and sa > 0:
+                    kw2[key] = kw2[key] + rng.normal(0, sa)
+            maker = getattr(v, self._MAKERS[kind])
+            v.internals.append(maker(float(np.clip(x2, 0.5, self.L-0.5)),
+                                     _record=True, **kw2))
+        if extra_strut_prob > 0:
+            for _ in range(3):
+                if rng.rand() < extra_strut_prob:
+                    xr = rng.uniform(1.0, self.L - 1.0)
+                    v.internals.append(v._mk_strut(xr, _record=True))
+        v.struts = [
+            (prm["a"], prm["b"], prm["r"])
+            for it in v.internals for name, prm in it.prims
+            if name == "segment"
+        ]
+        return v
 
     def export_obj(self, path, n_seg=48, n_cap=12):
         """导出壳体 + 管状内件网格（板类内件导出为薄盒近似，

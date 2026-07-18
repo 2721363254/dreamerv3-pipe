@@ -6,3 +6,4 @@ __pycache__/
 .idea/
 .vscode/
 *.zip
+envs/pipe_sim/_pool_cache/

@@ -34,7 +34,7 @@ class PipeInspection:
         # 训练环境用随机布局（泛化），评估环境用图纸复刻（固定场景）
         cfg.layout = "random" if mode == "train" else "blueprint"
         if mode != "train":
-            cfg.curriculum_episodes = 0   # 评估始终用真实机体半径
+            cfg.curriculum_enabled = False  # 评估始终用真实机体半径
         self._size = tuple(size)
         self._backend = MockPipeInspectionTask(
             task_config=cfg, seed=seed, num_envs=1, device="cpu"

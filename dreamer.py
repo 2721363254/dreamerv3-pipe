@@ -325,6 +325,22 @@ def main(config):
                 is_eval=True,
                 episodes=config.eval_episode_num,
             )
+            # 评估创新高时另存 best.pt（课程环境非平稳，"最后"≠"最优"）
+            _scores = [
+                float(np.array(ep["reward"]).sum())
+                for ep in list(eval_eps.values())[-config.eval_episode_num:]
+            ]
+            _mean = sum(_scores) / max(len(_scores), 1)
+            if not hasattr(agent, "_best_eval") or _mean > agent._best_eval:
+                agent._best_eval = _mean
+                torch.save(
+                    {
+                        "agent_state_dict": agent.state_dict(),
+                        "optims_state_dict": tools.recursively_collect_optim_state_dict(agent),
+                    },
+                    logdir / "best.pt",
+                )
+                print(f"[best] eval={_mean:.1f} 新高，已存 best.pt", flush=True)
             if config.video_pred_log:
                 video_pred = agent._wm.video_pred(next(eval_dataset))
                 logger.video("eval_openl", to_np(video_pred))

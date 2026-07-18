@@ -207,7 +207,7 @@ pipe_mock:
   # 管道巡检 mock（Aerial Gym 契约后端）：深度图 + 向量双模态，
   # 连续速度动作。5070 Ti 上可跑的中等规模配置。
   task: pipe_mock
-  steps: 1e5
+  steps: 4e5
   action_repeat: 1
   envs: 1
   prefill: 1000
@@ -229,7 +229,7 @@ pipe_mock:
   encoder: {mlp_keys: 'state', cnn_keys: 'image', cnn_depth: 24, mlp_layers: 2, mlp_units: 256}
   decoder: {mlp_keys: 'state', cnn_keys: 'image', cnn_depth: 24, mlp_layers: 2, mlp_units: 256}
   # 连续动作路径：normal 分布 + 重参数化梯度（对照 crafter 的 onehot+reinforce）
-  actor: {dist: 'normal', std: 'learned', min_std: 0.1}
+  actor: {dist: 'normal', std: 'learned', min_std: 0.1, entropy: 1e-3}
   imag_gradient: 'dynamics'
 
 debug:
