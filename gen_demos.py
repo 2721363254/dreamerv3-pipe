@@ -71,6 +71,7 @@ def run_episode(env, backend):
     tr["action"] = np.zeros(4, dtype=np.float32)
     tr["reward"] = np.float32(0.0)
     tr["discount"] = np.float32(1.0)
+    tr["logprob"] = np.float32(0.0)   # 与 tools.simulate 存储键集对齐
     transitions.append(tr)
     success = False
     for t in range(320):
@@ -80,6 +81,7 @@ def run_episode(env, backend):
         tr["action"] = a
         tr["reward"] = np.float32(r)
         tr["discount"] = np.float32(info.get("discount", 1.0))
+        tr["logprob"] = np.float32(0.0)
         transitions.append(tr)
         if done:
             success = bool(info.get("success", False))
