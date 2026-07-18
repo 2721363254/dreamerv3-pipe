@@ -91,6 +91,27 @@ def test_backend():
     print("[后端] 门控课程 ✓")
 
 
+def test_config_isolation():
+    """v3_run1 事故回归：eval 环境创建不得污染 train 环境的配置。"""
+    import importlib
+    import envs.pipe_inspection as pi
+    from envs.pipe_sim.backend import task_config
+
+    importlib.reload(pi)
+    e_train = pi.PipeInspection("mock", (64, 64), seed=1, mode="train")
+    e_eval = pi.PipeInspection("mock", (64, 64), seed=2, mode="eval")
+    assert e_train._backend.cfg.curriculum_enabled is True
+    assert e_train._backend.cfg.layout == "random"
+    assert e_eval._backend.cfg.curriculum_enabled is False
+    assert task_config.curriculum_enabled is True   # 共享类未被改写
+    assert task_config.layout == "random"
+    # overrides + held-out 池
+    e_ho = pi.PipeInspection("mock", (64, 64), seed=3, mode="train",
+                             overrides={"pool_split": "eval"})
+    assert all(x["seed"] >= 100000 for x in e_ho._backend._pool)
+    print("[隔离] eval不污染train / 共享类不被改写 / held-out池选择 ✓")
+
+
 def test_adapter():
     import importlib
     import envs.pipe_inspection as pi
@@ -117,5 +138,6 @@ if __name__ == "__main__":
     test_planner()
     test_pool()
     test_backend()
+    test_config_isolation()
     test_adapter()
     print("\n🎯 v3 三层架构契约全部通过")

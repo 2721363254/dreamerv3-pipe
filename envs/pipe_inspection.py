@@ -21,20 +21,25 @@ import gym
 import numpy as np
 import torch
 
-from .pipe_sim.backend import MockPipeInspectionTask, task_config
+from .pipe_sim.backend import MockPipeInspectionTask, task_config, copy_config
 
 
 class PipeInspection:
     metadata = {}
 
-    def __init__(self, task="mock", size=(64, 64), seed=0, mode="train"):
+    def __init__(self, task="mock", size=(64, 64), seed=0, mode="train",
+                 overrides=None):
         assert task in ("mock",), "真实 Aerial Gym 后端在 A100 阶段接入"
-        cfg = task_config
+        cfg = copy_config(task_config)    # 实例副本，不再污染共享类
         cfg.camera_size = tuple(size)
         # 训练环境用随机布局（泛化），评估环境用图纸复刻（固定场景）
         cfg.layout = "random" if mode == "train" else "blueprint"
         if mode != "train":
             cfg.curriculum_enabled = False  # 评估始终用真实机体半径
+        if overrides:
+            for k, v in overrides.items():
+                assert hasattr(cfg, k), f"未知配置项: {k}"
+                setattr(cfg, k, v)
         self._size = tuple(size)
         self._backend = MockPipeInspectionTask(
             task_config=cfg, seed=seed, num_envs=1, device="cpu"

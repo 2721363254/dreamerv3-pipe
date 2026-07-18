@@ -28,6 +28,15 @@ from .planner import plan_inspection_path
 from .pool import build_pool, instantiate
 
 
+def copy_config(cfg):
+    """把配置类/实例拷贝为独立实例 —— 杜绝共享类属性被跨环境
+    改写的污染（v3_run1 事故根因：eval 环境改类属性关闭了
+    train 环境的课程）。"""
+    ns = {k: getattr(cfg, k) for k in dir(cfg)
+          if not k.startswith("__") and not callable(getattr(cfg, k))}
+    return type("TaskConfigInstance", (), ns)()
+
+
 class task_config:
     seed = 0
     num_envs = 1
@@ -60,10 +69,11 @@ class task_config:
     dr_dyn_scale = 0.15        # v_tau / 速度上限的 ±随机化比例
 
     # 布局池（训练分布）与评估布局
-    layout = "random"          # random=训练池 | blueprint=图纸评估
+    layout = "random"          # random=布局池 | blueprint=图纸评估
     difficulty = "medium"
     pool_train = 64
     pool_eval = 16
+    pool_split = "train"       # train=训练池 | eval=held-out池（离线评估用）
     plan_margin = 0.10
 
     # 标称-扰动（0 = 图纸即现实；实验轴，后续扫描）
@@ -101,6 +111,7 @@ class task_config:
 class MockPipeInspectionTask:
     def __init__(self, task_config=task_config, seed=None, num_envs=None,
                  headless=None, device=None, use_warp=None):
+        task_config = copy_config(task_config)   # 入口即隔离
         if seed is not None:
             task_config.seed = seed
         if num_envs is not None:
@@ -126,7 +137,7 @@ class MockPipeInspectionTask:
             pool = build_pool(n_train=c.pool_train, n_eval=c.pool_eval,
                               difficulty=c.difficulty,
                               margin=c.plan_margin, base_seed=0)
-            self._pool = pool["train"]
+            self._pool = pool[c.pool_split]
 
         N = self.num_envs
         H, W = c.camera_size
