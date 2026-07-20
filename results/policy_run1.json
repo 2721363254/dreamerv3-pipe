@@ -1,0 +1,46 @@
+{
+  "who": "policy(logdir/pipe_v3_run1/best.pt)",
+  "seed": 1234,
+  "results": {
+    "blueprint": {
+      "n": 30,
+      "success": 0.9333333333333333,
+      "crash": 0.06666666666666667,
+      "timeout": -1.3877787807814457e-17,
+      "mean_return": 98.56760678623492,
+      "mean_length": 46.7
+    },
+    "heldout": {
+      "n": 30,
+      "success": 0.7,
+      "crash": 0.3,
+      "timeout": 5.551115123125783e-17,
+      "mean_return": 69.81844264903727,
+      "mean_length": 54.3
+    },
+    "sparse": {
+      "n": 30,
+      "success": 0.8666666666666667,
+      "crash": 0.13333333333333333,
+      "timeout": -2.7755575615628914e-17,
+      "mean_return": 92.18532937935863,
+      "mean_length": 61.43333333333333
+    },
+    "medium": {
+      "n": 30,
+      "success": 0.16666666666666666,
+      "crash": 0.8,
+      "timeout": 0.033333333333333326,
+      "mean_return": 10.554654300383602,
+      "mean_length": 65.73333333333333
+    },
+    "dense": {
+      "n": 30,
+      "success": 0.16666666666666666,
+      "crash": 0.8333333333333334,
+      "timeout": 0.0,
+      "mean_return": 1.399748873260493,
+      "mean_length": 54.06666666666667
+    }
+  }
+}

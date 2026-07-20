@@ -1,0 +1,46 @@
+{
+  "who": "expert",
+  "seed": 1234,
+  "results": {
+    "blueprint": {
+      "n": 30,
+      "success": 1.0,
+      "crash": 0.0,
+      "timeout": 0.0,
+      "mean_return": 107.11831359037508,
+      "mean_length": 65.86666666666666
+    },
+    "heldout": {
+      "n": 30,
+      "success": 0.9666666666666667,
+      "crash": 0.0,
+      "timeout": 0.033333333333333326,
+      "mean_return": 102.83123368361655,
+      "mean_length": 75.46666666666667
+    },
+    "sparse": {
+      "n": 30,
+      "success": 0.9666666666666667,
+      "crash": 0.0,
+      "timeout": 0.033333333333333326,
+      "mean_return": 105.3901781138964,
+      "mean_length": 73.26666666666667
+    },
+    "medium": {
+      "n": 30,
+      "success": 0.9666666666666667,
+      "crash": 0.0,
+      "timeout": 0.033333333333333326,
+      "mean_return": 102.83123368361655,
+      "mean_length": 75.46666666666667
+    },
+    "dense": {
+      "n": 30,
+      "success": 0.23333333333333334,
+      "crash": 0.4,
+      "timeout": 0.3666666666666666,
+      "mean_return": 25.9828047711635,
+      "mean_length": 142.96666666666667
+    }
+  }
+}

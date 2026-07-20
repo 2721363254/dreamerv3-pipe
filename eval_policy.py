@@ -60,8 +60,10 @@ def load_config():
 
 SPLITS = {
     # split 名 → (mode, overrides)
+    # 注: heldout 即 medium 难度的 held-out 池；两者配置等价，
+    # 默认列表已合并（仅保留 medium），heldout 仍可显式指定。
     "blueprint": ("eval", {}),
-    "heldout":   ("train", {"pool_split": "eval",
+    "heldout":   ("train", {"pool_split": "eval", "difficulty": "medium",
                             "curriculum_enabled": False}),
     "sparse":    ("train", {"pool_split": "eval", "difficulty": "sparse",
                             "curriculum_enabled": False}),
@@ -85,6 +87,8 @@ def make_env(split, seed):
 
 def build_agent(config, env, ckpt_path, device):
     config.num_actions = env.action_space.shape[0]
+    config.eval_state_mean = True   # 隐状态取均值：消除RSSM后验采样随机性
+                                    # （这是heldout/medium同配置却结果迥异的真根因）
     logdir = pathlib.Path("/tmp/eval_policy_logs")
     logdir.mkdir(parents=True, exist_ok=True)
     logger = tools.Logger(logdir, 0)
@@ -92,12 +96,19 @@ def build_agent(config, env, ckpt_path, device):
                     logger, dataset=None).to(device)
     agent.requires_grad_(False)
     ckpt = torch.load(ckpt_path, map_location=device)
-    agent.load_state_dict(ckpt["agent_state_dict"])
+    state = ckpt["agent_state_dict"]
+    # --compile True 训练的checkpoint被torch.compile包裹，键带 _orig_mod. 前缀；
+    # 剥掉后与未编译模型逐键对齐（兼容编译/非编译两种checkpoint）
+    state = {k.replace("._orig_mod", ""): v for k, v in state.items()}
+    agent.load_state_dict(state)
     agent.eval()
     return agent
 
 
-def rollout_policy(agent, env, device, max_steps=320):
+def rollout_policy(agent, env, device, max_steps=320, ep_seed=None):
+    if ep_seed is not None:
+        torch.manual_seed(ep_seed)
+        np.random.seed(ep_seed)
     obs = env.reset()
     state = None
     total, steps = 0.0, 0
@@ -117,7 +128,9 @@ def rollout_policy(agent, env, device, max_steps=320):
     return dict(ret=total, length=steps, success=False, crash=False)
 
 
-def rollout_expert(env, backend, max_steps=320):
+def rollout_expert(env, backend, max_steps=320, ep_seed=None):
+    if ep_seed is not None:
+        np.random.seed(ep_seed)
     env.reset()
     backend._cur_radius[:] = 0.26
     total, steps = 0.0, 0
@@ -138,7 +151,8 @@ def main():
     ap.add_argument("--ckpt", type=str, required=False, default=None,
                     help="策略 checkpoint（best.pt）。--expert 模式可省略")
     ap.add_argument("--episodes", type=int, default=30, help="每 split 回合数")
-    ap.add_argument("--splits", nargs="+", default=list(SPLITS.keys()))
+    ap.add_argument("--splits", nargs="+",
+                    default=["blueprint", "sparse", "medium", "dense"])
     ap.add_argument("--expert", action="store_true",
                     help="评估势场专家而非策略（同协议对照列）")
     ap.add_argument("--seed", type=int, default=1234)
@@ -154,8 +168,8 @@ def main():
     results = {}
     who = "expert" if args.expert else f"policy({args.ckpt})"
     print(f"评估对象: {who} | 每split {args.episodes} 回合\n")
-    print(f"{'split':10s} {'成功率':>7s} {'撞毁率':>7s} {'超时率':>7s} "
-          f"{'均回报':>8s} {'均长度':>7s}")
+    print(f"{'split':10s} {'成功率(95%CI)':>16s}  {'撞毁':>6s} {'超时':>6s} "
+          f"{'均回报':>8s} {'均长':>6s}")
 
     for split in args.splits:
         env, backend = make_env(split, seed=args.seed)
@@ -165,20 +179,28 @@ def main():
             agent = build_agent(config, env, args.ckpt, args.device)
         eps = []
         for e in range(args.episodes):
+            ep_seed = args.seed * 10000 + e   # 逐回合确定，跨split/run可复现
             if args.expert:
-                eps.append(rollout_expert(env, backend))
+                eps.append(rollout_expert(env, backend, ep_seed=ep_seed))
             else:
-                eps.append(rollout_policy(agent, env, args.device))
-        sr = np.mean([e["success"] for e in eps])
+                eps.append(rollout_policy(agent, env, args.device, ep_seed=ep_seed))
+        succ = np.array([e["success"] for e in eps], dtype=float)
+        sr = succ.mean()
         cr = np.mean([e["crash"] for e in eps])
         to = 1.0 - sr - cr
         mr = np.mean([e["ret"] for e in eps])
         ml = np.mean([e["length"] for e in eps])
+        # 自助法 95% CI（成功率）
+        rng = np.random.RandomState(0)
+        boots = [succ[rng.randint(0, len(succ), len(succ))].mean()
+                 for _ in range(2000)]
+        lo, hi = np.percentile(boots, [2.5, 97.5])
         results[split] = dict(n=args.episodes, success=float(sr),
+                              success_ci=[float(lo), float(hi)],
                               crash=float(cr), timeout=float(to),
                               mean_return=float(mr), mean_length=float(ml))
-        print(f"{split:10s} {sr*100:6.1f}% {cr*100:6.1f}% {to*100:6.1f}% "
-              f"{mr:8.1f} {ml:7.1f}")
+        print(f"{split:10s} {sr*100:5.1f}% [{lo*100:4.1f},{hi*100:4.1f}] "
+              f"crash{cr*100:5.1f}% to{to*100:5.1f}% ret{mr:7.1f} len{ml:6.1f}")
 
     if args.json:
         out = pathlib.Path(args.json)
